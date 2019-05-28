@@ -26,8 +26,8 @@
 /* USER CODE BEGIN Includes */
 #include "stm32f769i_discovery.h"
 #include "stm32f769i_discovery_lcd.h"
-#include "stdio.h"
 #include "stm32f769i_discovery_ts.h"
+#include "stdio.h"
 #include "stdbool.h"
 /* USER CODE END Includes */
 
@@ -70,8 +70,15 @@ SDRAM_HandleTypeDef hsdram1;
 
 /* USER CODE BEGIN PV */
 volatile uint32_t ConvertedValue;
-volatile bool flagADC1 = false;
-volatile uint32_t flagTIM6 = 0;
+bool flagADC1 = false;
+bool flagTS = false;
+uint16_t counterTIM6 = 0;
+bool flagGameTime = 0;
+uint16_t gameTimeSec = 0;
+uint16_t gameTimeMin = 0;
+const uint16_t cellSize = 60;
+uint16_t xPos;
+uint16_t yPos;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -86,8 +93,10 @@ static void MX_SDMMC2_SD_Init(void);
 static void MX_TIM6_Init(void);
 /* USER CODE BEGIN PFP */
 static void LCD_Config(void);
-static void LCD_Grid(void);
-void tempDisplay();
+void GridLCD();
+void TempLCD();
+void CellTS();
+void GameTimeLCD();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -101,6 +110,7 @@ void tempDisplay();
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
 
 
@@ -151,8 +161,7 @@ int main(void)
   BSP_TS_Init(BSP_LCD_GetXSize(), BSP_LCD_GetYSize());
   BSP_TS_ITConfig();
   HAL_TIM_Base_Start_IT(&htim6);
-  LCD_Grid();
-  tempDisplay();
+  GridLCD();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -160,8 +169,16 @@ int main(void)
   while (1) {
 	  if (flagADC1 == true) {
 		  flagADC1 = false;
-		  tempDisplay();
+		  TempLCD();
 	  }
+    if (flagTS == true) {
+    	flagTS = false;
+    	CellTS();
+    }
+    if (flagGameTime == true) {
+    	flagGameTime = false;
+    	GameTimeLCD();
+    }
   }
     /* USER CODE END WHILE */
 
@@ -665,7 +682,18 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-void tempDisplay() {
+void GridLCD()
+{
+	for (int i = 160; i <= 640; i+=cellSize) {
+	BSP_LCD_FillRect(i, 0, 1, 480);
+	}
+
+  for (int i = 0; i <= 480; i+=cellSize) {
+    BSP_LCD_FillRect(160, i, 480, 1);
+  }
+}
+
+void TempLCD() {
 	long int JTemp = 0;
 	char s[10];
 	HAL_StatusTypeDef status=HAL_ADC_PollForConversion(&hadc1,TEMP_REFRESH_PERIOD);
@@ -677,38 +705,31 @@ void tempDisplay() {
 	}
 }
 
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-	if(htim->Instance == TIM6) {
-		if (flagTIM6 == 0) {
-			flagTIM6++;
-			flagADC1 = false;
-		} else {
-			flagTIM6 = 0;
-			flagADC1 = true;
-		}
+void GameTimeLCD() {
+	char string[10];
+	gameTimeSec++;
+	if (gameTimeSec > 59) {
+		gameTimeSec = 0;
+		gameTimeMin++;
 	}
+	sprintf(string, "%d:%02d", gameTimeMin, gameTimeSec);
+		 	BSP_LCD_DisplayStringAtLine(10, (uint8_t *)string);
 }
 
-
-
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-	TS_StateTypeDef TS_State;
+void CellTS() {
+  TS_StateTypeDef TS_State;
 	char string[10];
 
-	if(GPIO_Pin == GPIO_PIN_13) {
-		BSP_TS_GetState(&TS_State);
-		if (TS_State.touchX[0] <= 800 && TS_State.touchY[0] <= 480 ) {
-		sprintf(string, "X = %3d", (int)TS_State.touchX[0]);
-		BSP_LCD_DisplayStringAtLine(4, (uint8_t *)string);
-		sprintf(string, "Y = %3d", (int)TS_State.touchY[0]);
-		BSP_LCD_DisplayStringAtLine(5, (uint8_t *)string);
-
-		if (TS_State.touchX[0] > 160 && TS_State.touchX[0] < 280 && TS_State.touchY[0] > 0 && TS_State.touchY[0] < 120) {
-			BSP_LED_Toggle(LED_GREEN);
-			  }
-		}
-	}
-
+  BSP_TS_GetState(&TS_State);
+		
+  if (TS_State.touchX[0] >= 160 && TS_State.touchX[0] <= 640 && TS_State.touchY[0] >= 0 && TS_State.touchY[0] <= 480 ) {
+        xPos = (TS_State.touchX[0] - 160 ) / cellSize;
+        yPos = TS_State.touchY[0] / cellSize;
+       	sprintf(string, "x = %d", xPos);
+        sprintf(string, "y = %d", yPos);
+        BSP_LCD_DisplayStringAtLine(15, (uint8_t *)string);
+        BSP_LCD_DisplayStringAtLine(16, (uint8_t *)string);
+  }
 }
 
 static void LCD_Config(void)
@@ -727,26 +748,23 @@ static void LCD_Config(void)
 	 BSP_LCD_SetBackColor(LCD_COLOR_WHITE);
 }
 
-static void LCD_Grid(void)
-{
-	BSP_LCD_FillRect(160, 0, 480, 3);
-	BSP_LCD_FillRect(160, 60, 480, 3);
-	BSP_LCD_FillRect(160, 120, 480, 3);
-	BSP_LCD_FillRect(160, 180, 480, 3);
-	BSP_LCD_FillRect(160, 240, 480, 3);
-	BSP_LCD_FillRect(160, 300, 480, 3);
-	BSP_LCD_FillRect(160, 360, 480, 3);
-	BSP_LCD_FillRect(160, 420, 480, 3);
-	BSP_LCD_FillRect(160, 480, 480, 3);
-	BSP_LCD_FillRect(160, 0, 5, 480);
-	BSP_LCD_FillRect(220, 0, 3, 480);
-	BSP_LCD_FillRect(280, 0, 3, 480);
-	BSP_LCD_FillRect(340, 0, 3, 480);
-	BSP_LCD_FillRect(400, 0, 3, 480);
-	BSP_LCD_FillRect(460, 0, 3, 480);
-	BSP_LCD_FillRect(520, 0, 3, 480);
-	BSP_LCD_FillRect(580, 0, 3, 480);
-	BSP_LCD_FillRect(640, 0, 5, 480);
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+	if(htim->Instance == TIM6) {
+		flagGameTime = true;
+		if (counterTIM6 == 0) {
+			counterTIM6++;
+			flagADC1 = false;
+		} else {
+			counterTIM6 = 0;
+			flagADC1 = true;
+		}
+	}
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+	if(GPIO_Pin == GPIO_PIN_13) {
+    flagTS = true;
+  }
 }
 
 /* USER CODE END 4 */
