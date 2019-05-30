@@ -73,12 +73,22 @@ volatile uint32_t ConvertedValue;
 bool flagADC1 = false;
 bool flagTS = false;
 uint16_t counterTIM6 = 0;
-bool flagGameTime = 0;
 uint16_t gameTimeSec = 0;
 uint16_t gameTimeMin = 0;
+bool flagGameTime = 0;
+bool flagGameStart = false;
+bool flagStartTime = false;
 const uint16_t cellSize = 60;
-uint16_t xPos;
-uint16_t yPos;
+uint16_t x_cellTS;
+uint16_t y_cellTS;
+int board [8][8];
+bool moves [8][8];
+const int playerDisk = 1;
+const int compDisk = -1;
+const int SIZE = 8; 
+int x;
+int y;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -95,12 +105,18 @@ static void MX_TIM6_Init(void);
 static void LCD_Config(void);
 void GridLCD();
 void TempLCD();
-void CellTS();
+void TouchTS();
 void GameTimeLCD();
+void BoardUpdateLCD (int x, int y);
+void GameStart();
+void StringStarttemp();
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+
 
 /* USER CODE END 0 */
 
@@ -111,8 +127,9 @@ void GameTimeLCD();
 int main(void)
 {
 
-  /* USER CODE BEGIN 1 */
+		
 
+  /* USER CODE BEGIN 1 */
 
   //unsigned int nbytes;
 
@@ -162,24 +179,27 @@ int main(void)
   BSP_TS_ITConfig();
   HAL_TIM_Base_Start_IT(&htim6);
   GridLCD();
+  StringStarttemp();
+ 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1) {
-	  if (flagADC1 == true) {
-		  flagADC1 = false;
-		  TempLCD();
-	  }
-    if (flagTS == true) {
-    	flagTS = false;
-    	CellTS();
+  while (1)
+  {
+	TempLCD();
+    TouchTS();
+
+    if (flagGameStart == true) {
+	    flagGameStart = false;
+	    flagStartTime = true;
+	    GameStart();
     }
-    if (flagGameTime == true) {
-    	flagGameTime = false;
-    	GameTimeLCD();
+	if(flagStartTime == true) {
+		GameTimeLCD();
     }
-  }
+ }
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -684,85 +704,166 @@ static void MX_GPIO_Init(void)
 
 void GridLCD()
 {
-	for (int i = 160; i <= 640; i+=cellSize) {
-	BSP_LCD_FillRect(i, 0, 1, 480);
-	}
+  BSP_LCD_SetTextColor(LCD_COLOR_GREEN);
+  BSP_LCD_FillRect(160, 0, 480, 480);
+  BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
 
-  for (int i = 0; i <= 480; i+=cellSize) {
+  for (int i = 160; i <= 640; i += cellSize)
+  {
+    BSP_LCD_FillRect(i, 0, 1, 480);
+  }
+
+  for (int i = 0; i <= 480; i += cellSize)
+  {
     BSP_LCD_FillRect(160, i, 480, 1);
   }
+
+
 }
 
-void TempLCD() {
-	long int JTemp = 0;
-	char s[10];
-	HAL_StatusTypeDef status=HAL_ADC_PollForConversion(&hadc1,TEMP_REFRESH_PERIOD);
-	if (status==HAL_OK) {
-		ConvertedValue=HAL_ADC_GetValue(&hadc1);
-		JTemp = ((((ConvertedValue * VREF)/MAX_CONVERTED_VALUE) - VSENS_AT_AMBIENT_TEMP) * 10 / AVG_SLOPE) + AMBIENT_TEMP; //internal sensor temperature
-		sprintf(s, "TEMP %.2ldC", JTemp);
-		BSP_LCD_DisplayStringAt(0, 0, (uint8_t *)s, LEFT_MODE);
-	}
-}
-
-void GameTimeLCD() {
-	char string[10];
-	gameTimeSec++;
-	if (gameTimeSec > 59) {
-		gameTimeSec = 0;
-		gameTimeMin++;
-	}
-	sprintf(string, "%d:%02d", gameTimeMin, gameTimeSec);
-		 	BSP_LCD_DisplayStringAtLine(10, (uint8_t *)string);
-}
-
-void CellTS() {
-  TS_StateTypeDef TS_State;
-	char string[10];
-
-  BSP_TS_GetState(&TS_State);
-		
-  if (TS_State.touchX[0] >= 160 && TS_State.touchX[0] <= 640 && TS_State.touchY[0] >= 0 && TS_State.touchY[0] <= 480 ) {
-        xPos = (TS_State.touchX[0] - 160 ) / cellSize;
-        yPos = TS_State.touchY[0] / cellSize;
-       	sprintf(string, "x = %d", xPos);
-        sprintf(string, "y = %d", yPos);
-        BSP_LCD_DisplayStringAtLine(15, (uint8_t *)string);
-        BSP_LCD_DisplayStringAtLine(16, (uint8_t *)string);
+void TempLCD()
+{
+  if (flagADC1 == true)
+  {
+    flagADC1 = false;
+    long int JTemp = 0;
+    char s[10];
+    HAL_StatusTypeDef status = HAL_ADC_PollForConversion(&hadc1, TEMP_REFRESH_PERIOD);
+    if (status == HAL_OK)
+    {
+      ConvertedValue = HAL_ADC_GetValue(&hadc1);
+      JTemp = ((((ConvertedValue * VREF) / MAX_CONVERTED_VALUE) - VSENS_AT_AMBIENT_TEMP) * 10 / AVG_SLOPE) + AMBIENT_TEMP; //internal sensor temperature
+      sprintf(s, "%.2ldC", JTemp);
+      BSP_LCD_DisplayStringAt(0, 0, (uint8_t *)s, RIGHT_MODE);
+    }
   }
 }
+
+void GameTimeLCD()
+{
+  if (flagGameTime == true ) {
+    flagGameTime = false;
+    char string[10];
+    gameTimeSec++;
+
+    if (gameTimeSec > 59)
+    {
+      gameTimeSec = 0;
+      gameTimeMin++;
+    }
+    sprintf(string, "%02d:%02d", gameTimeMin, gameTimeSec);
+    BSP_LCD_DisplayStringAtLine(10, (uint8_t *)string);
+  }
+}
+
+void TouchTS()
+{
+  if (flagTS == true)
+  {
+    flagTS = false;
+
+    TS_StateTypeDef TS_State;
+    BSP_TS_GetState(&TS_State);
+    if (TS_State.touchX[0] >= 160 && TS_State.touchX[0] <= 640 && TS_State.touchY[0] >= 0 && TS_State.touchY[0] <= 480)
+    {
+      x_cellTS = (TS_State.touchX[0] - 160) / cellSize;
+      y_cellTS = TS_State.touchY[0] / cellSize;
+//      sprintf(string, "x = %d", x_cellTS);
+//      BSP_LCD_DisplayStringAtLine(15, (uint8_t *)string);
+//      sprintf(string, "y = %d", y_cellTS);
+//      BSP_LCD_DisplayStringAtLine(16, (uint8_t *)string);
+    }
+    if (TS_State.touchX[0] >= 0 && TS_State.touchX[0] <= 120 && TS_State.touchY[0] >= 60 && TS_State.touchY[0] <= 120)
+    {
+      flagGameStart = true;
+    }
+  }
+}
+
+void GameStart()
+{
+  for (int l = 0; l < 8; l++)
+  {
+    for (int c = 0; c < 8; c++)
+    {
+      board[l][c] = 0;
+    }
+  }
+  int mid = SIZE / 2;
+  board[mid - 1][mid - 1] = board[mid][mid] = playerDisk;
+  board[mid - 1][mid] = board[mid][mid - 1] = compDisk;
+
+  BoardUpdateLCD(mid - 1, mid - 1);
+  BoardUpdateLCD(mid, mid);
+  BoardUpdateLCD(mid - 1, mid);
+  BoardUpdateLCD(mid, mid - 1);
+
+}
+
+void BoardUpdateLCD(int x, int y)
+{
+
+  if (board[x][y] == 1)
+  {
+    x = x * cellSize + 190;
+    y = y * cellSize + 30;
+    BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+    BSP_LCD_FillCircle(x, y, 25);
+  }
+  if (board[x][y] == -1)
+  {
+    x = x * cellSize + 190;
+    y = y * cellSize + 30;
+    BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
+    BSP_LCD_FillCircle(x, y, 25);
+  }
+}
+
+void StringStarttemp() {
+	char string[20];
+		sprintf(string, "START");
+		BSP_LCD_DisplayStringAtLine(3, (uint8_t *)string);
+}
+
 
 static void LCD_Config(void)
 {
-	uint32_t  lcd_status = LCD_OK;
+  uint32_t lcd_status = LCD_OK;
 
-	 /* Initialize the LCD */
-	 lcd_status = BSP_LCD_Init();
-	 while(lcd_status != LCD_OK);
+  /* Initialize the LCD */
+  lcd_status = BSP_LCD_Init();
+  while (lcd_status != LCD_OK);
 
-	 BSP_LCD_LayerDefaultInit(0, LCD_FB_START_ADDRESS);
+  BSP_LCD_LayerDefaultInit(0, LCD_FB_START_ADDRESS);
 
-	 /* LCD default settings */
-	 BSP_LCD_Clear(LCD_COLOR_WHITE);
-	 BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
-	 BSP_LCD_SetBackColor(LCD_COLOR_WHITE);
+  /* LCD default settings */
+  BSP_LCD_Clear(LCD_COLOR_WHITE);
+  BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
+  BSP_LCD_SetBackColor(LCD_COLOR_WHITE);
 }
 
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-	if(htim->Instance == TIM6) {
-		flagGameTime = true;
-		if (counterTIM6 == 0) {
-			counterTIM6++;
-			flagADC1 = false;
-		} else {
-			counterTIM6 = 0;
-			flagADC1 = true;
-		}
-	}
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  if (htim->Instance == TIM6)
+  {
+    flagGameTime = true;
+    if (counterTIM6 == 0)
+    {
+      counterTIM6++;
+      flagADC1 = false;
+    }
+    else
+    {
+      counterTIM6 = 0;
+      flagADC1 = true;
+    }
+  }
 }
 
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-	if(GPIO_Pin == GPIO_PIN_13) {
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == GPIO_PIN_13)
+  {
     flagTS = true;
   }
 }
