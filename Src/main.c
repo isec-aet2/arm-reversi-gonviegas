@@ -75,7 +75,7 @@ bool flagTS = false;
 uint16_t counterTIM6 = 0;
 uint16_t gameTimeSec = 0;
 uint16_t gameTimeMin = 0;
-bool flagGameTime = 0;
+bool flagGameTime = false;
 bool flagGameStart = false;
 bool flagStartTime = false;
 const uint16_t cellSize = 60;
@@ -109,7 +109,8 @@ void TouchTS();
 void GameTimeLCD();
 void BoardUpdateLCD (int x, int y);
 void GameStart();
-void StringStarttemp();
+void StartScreen();
+
 
 /* USER CODE END PFP */
 
@@ -171,15 +172,16 @@ int main(void)
   /* USER CODE BEGIN 2 */
   BSP_LED_Init(LED_RED);
   BSP_LED_Init(LED_GREEN);
+  BSP_PB_Init(BUTTON_USER, BUTTON_MODE_GPIO);
   LCD_Config();
+  //BSP_PB_Init();
   BSP_LCD_LayerDefaultInit(0, LAYER0_ADDRESS);
   BSP_LCD_SelectLayer(0);
   HAL_ADC_Start(&hadc1);
   BSP_TS_Init(BSP_LCD_GetXSize(), BSP_LCD_GetYSize());
   BSP_TS_ITConfig();
   HAL_TIM_Base_Start_IT(&htim6);
-  GridLCD();
-  StringStarttemp();
+  StartScreen();
  
   /* USER CODE END 2 */
 
@@ -189,11 +191,17 @@ int main(void)
   {
 	TempLCD();
     TouchTS();
+    if (BSP_PB_GetState(BUTTON_WAKEUP)==1){
+    	flagStartTime = false;
+    	StartScreen();
+    	GameTimeLCD();
+    }
 
     if (flagGameStart == true) {
 	    flagGameStart = false;
 	    flagStartTime = true;
 	    GameStart();
+
     }
 	if(flagStartTime == true) {
 		GameTimeLCD();
@@ -704,17 +712,20 @@ static void MX_GPIO_Init(void)
 
 void GridLCD()
 {
+
   BSP_LCD_SetTextColor(LCD_COLOR_GREEN);
   BSP_LCD_FillRect(160, 0, 480, 480);
-  BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
+
 
   for (int i = 160; i <= 640; i += cellSize)
   {
+	BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
     BSP_LCD_FillRect(i, 0, 1, 480);
   }
 
   for (int i = 0; i <= 480; i += cellSize)
   {
+	BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
     BSP_LCD_FillRect(160, i, 480, 1);
   }
 
@@ -734,6 +745,8 @@ void TempLCD()
       ConvertedValue = HAL_ADC_GetValue(&hadc1);
       JTemp = ((((ConvertedValue * VREF) / MAX_CONVERTED_VALUE) - VSENS_AT_AMBIENT_TEMP) * 10 / AVG_SLOPE) + AMBIENT_TEMP; //internal sensor temperature
       sprintf(s, "%.2ldC", JTemp);
+      BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+      BSP_LCD_SetBackColor(LCD_COLOR_DARKBLUE);
       BSP_LCD_DisplayStringAt(0, 0, (uint8_t *)s, RIGHT_MODE);
     }
   }
@@ -744,6 +757,7 @@ void GameTimeLCD()
   if (flagGameTime == true ) {
     flagGameTime = false;
     char string[10];
+    char s_time[10];
     gameTimeSec++;
 
     if (gameTimeSec > 59)
@@ -751,8 +765,18 @@ void GameTimeLCD()
       gameTimeSec = 0;
       gameTimeMin++;
     }
-    sprintf(string, "%02d:%02d", gameTimeMin, gameTimeSec);
-    BSP_LCD_DisplayStringAtLine(10, (uint8_t *)string);
+    sprintf(s_time, "GAME TIME");
+    BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+    BSP_LCD_SetBackColor(LCD_COLOR_DARKBLUE);
+    BSP_LCD_DisplayStringAtLine(19, (uint8_t *)s_time);
+    sprintf(string, "  %02d:%02d", gameTimeMin, gameTimeSec);
+    BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+    BSP_LCD_SetBackColor(LCD_COLOR_DARKBLUE);
+    BSP_LCD_DisplayStringAtLine(18, (uint8_t *)string);
+  }
+  if (flagStartTime == false) {
+    gameTimeSec = 0;
+    gameTimeMin = 0;
   }
 }
 
@@ -773,7 +797,7 @@ void TouchTS()
 //      sprintf(string, "y = %d", y_cellTS);
 //      BSP_LCD_DisplayStringAtLine(16, (uint8_t *)string);
     }
-    if (TS_State.touchX[0] >= 0 && TS_State.touchX[0] <= 120 && TS_State.touchY[0] >= 60 && TS_State.touchY[0] <= 120)
+    if (TS_State.touchX[0] >= 350 && TS_State.touchX[0] <= 450 && TS_State.touchY[0] >= 310 && TS_State.touchY[0] <= 390)
     {
       flagGameStart = true;
     }
@@ -782,8 +806,9 @@ void TouchTS()
 
 void GameStart()
 {
-  for (int l = 0; l < 8; l++)
-  {
+	GridLCD();
+	for (int l = 0; l < 8; l++)
+	{
     for (int c = 0; c < 8; c++)
     {
       board[l][c] = 0;
@@ -802,7 +827,6 @@ void GameStart()
 
 void BoardUpdateLCD(int x, int y)
 {
-
   if (board[x][y] == 1)
   {
     x = x * cellSize + 190;
@@ -819,10 +843,17 @@ void BoardUpdateLCD(int x, int y)
   }
 }
 
-void StringStarttemp() {
+
+void StartScreen() {
+
 	char string[20];
 		sprintf(string, "START");
-		BSP_LCD_DisplayStringAtLine(3, (uint8_t *)string);
+		BSP_LCD_Clear(LCD_COLOR_DARKBLUE);
+		BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+		BSP_LCD_SetBackColor(LCD_COLOR_DARKBLUE);
+		BSP_LCD_DisplayStringAt(0,350, (uint8_t *)string, CENTER_MODE);
+		sprintf(string, "REVERSI");
+		BSP_LCD_DisplayStringAt(0,160, (uint8_t *)string, CENTER_MODE);
 }
 
 
@@ -837,9 +868,9 @@ static void LCD_Config(void)
   BSP_LCD_LayerDefaultInit(0, LCD_FB_START_ADDRESS);
 
   /* LCD default settings */
-  BSP_LCD_Clear(LCD_COLOR_WHITE);
-  BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
-  BSP_LCD_SetBackColor(LCD_COLOR_WHITE);
+  BSP_LCD_Clear(LCD_COLOR_DARKBLUE);
+  BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+  BSP_LCD_SetBackColor(LCD_COLOR_DARKBLUE);
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
