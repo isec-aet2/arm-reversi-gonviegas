@@ -73,11 +73,11 @@ volatile uint32_t ConvertedValue;
 bool flagADC1 = false;
 bool flagTS = false;
 uint16_t counterTIM6 = 0;
-uint16_t gameTimeSec = 0;
-uint16_t gameTimeMin = 0;
 bool flagGameTime = false;
 bool flagGameStart = false;
 bool flagStartTime = false;
+uint16_t gameTimeSec = 0;
+uint16_t gameTimeMin = 0;
 const uint16_t cellSize = 60;
 uint16_t x_cellTS;
 uint16_t y_cellTS;
@@ -88,6 +88,11 @@ const int compDisk = -1;
 const int SIZE = 8; 
 int x;
 int y;
+int numberMoves = 0;
+bool playerNext = true;
+int nbytes;
+char saveSD [60];
+
 
 /* USER CODE END PV */
 
@@ -107,9 +112,11 @@ void GridLCD();
 void TempLCD();
 void TouchTS();
 void GameTimeLCD();
-void BoardUpdateLCD (int x, int y);
+void BoardUpdateLCD (int x, int y, int player);
 void GameStart();
 void StartScreen();
+void PlayerInput ();
+void GameEnd();
 
 
 /* USER CODE END PFP */
@@ -127,6 +134,7 @@ void StartScreen();
   */
 int main(void)
 {
+
 
 		
 
@@ -182,6 +190,8 @@ int main(void)
   BSP_TS_ITConfig();
   HAL_TIM_Base_Start_IT(&htim6);
   StartScreen();
+  
+
  
   /* USER CODE END 2 */
 
@@ -189,8 +199,11 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	TempLCD();
+	  TempLCD();
     TouchTS();
+    PlayerInput();
+   
+
     if (BSP_PB_GetState(BUTTON_WAKEUP)==1){
     	flagStartTime = false;
     	StartScreen();
@@ -201,13 +214,12 @@ int main(void)
 	    flagGameStart = false;
 	    flagStartTime = true;
 	    GameStart();
-
     }
 	if(flagStartTime == true) {
 		GameTimeLCD();
     }
- }
 
+  }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -765,14 +777,14 @@ void GameTimeLCD()
       gameTimeSec = 0;
       gameTimeMin++;
     }
-    sprintf(s_time, "GAME TIME");
+    sprintf(string, "GAME TIME");
     BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
     BSP_LCD_SetBackColor(LCD_COLOR_DARKBLUE);
-    BSP_LCD_DisplayStringAtLine(19, (uint8_t *)s_time);
-    sprintf(string, "  %02d:%02d", gameTimeMin, gameTimeSec);
+    BSP_LCD_DisplayStringAtLine(19, (uint8_t *)string);
+    sprintf(s_time, "  %02d:%02d", gameTimeMin, gameTimeSec);
     BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
     BSP_LCD_SetBackColor(LCD_COLOR_DARKBLUE);
-    BSP_LCD_DisplayStringAtLine(18, (uint8_t *)string);
+    BSP_LCD_DisplayStringAtLine(18, (uint8_t *)s_time);
   }
   if (flagStartTime == false) {
     gameTimeSec = 0;
@@ -785,21 +797,20 @@ void TouchTS()
   if (flagTS == true)
   {
     flagTS = false;
-
     TS_StateTypeDef TS_State;
     BSP_TS_GetState(&TS_State);
-    if (TS_State.touchX[0] >= 160 && TS_State.touchX[0] <= 640 && TS_State.touchY[0] >= 0 && TS_State.touchY[0] <= 480)
-    {
-      x_cellTS = (TS_State.touchX[0] - 160) / cellSize;
-      y_cellTS = TS_State.touchY[0] / cellSize;
-//      sprintf(string, "x = %d", x_cellTS);
-//      BSP_LCD_DisplayStringAtLine(15, (uint8_t *)string);
-//      sprintf(string, "y = %d", y_cellTS);
-//      BSP_LCD_DisplayStringAtLine(16, (uint8_t *)string);
+    if(flagStartTime == true){
+      if (TS_State.touchX[0] >= 160 && TS_State.touchX[0] <= 640 && TS_State.touchY[0] >= 0 && TS_State.touchY[0] <= 480)
+      {
+        x_cellTS = (TS_State.touchX[0] - 160) / cellSize;
+        y_cellTS = TS_State.touchY[0] / cellSize;
+      }
     }
-    if (TS_State.touchX[0] >= 350 && TS_State.touchX[0] <= 450 && TS_State.touchY[0] >= 310 && TS_State.touchY[0] <= 390)
-    {
-      flagGameStart = true;
+    if (flagStartTime == false){
+      if (TS_State.touchX[0] >= 350 && TS_State.touchX[0] <= 450 && TS_State.touchY[0] >= 310 && TS_State.touchY[0] <= 390)
+      {
+        flagGameStart = true;
+      }
     }
   }
 }
@@ -807,6 +818,11 @@ void TouchTS()
 void GameStart()
 {
 	GridLCD();
+
+  playerNext = !playerNext;
+
+  numberMoves = 4;    
+
 	for (int l = 0; l < 8; l++)
 	{
     for (int c = 0; c < 8; c++)
@@ -818,23 +834,25 @@ void GameStart()
   board[mid - 1][mid - 1] = board[mid][mid] = playerDisk;
   board[mid - 1][mid] = board[mid][mid - 1] = compDisk;
 
-  BoardUpdateLCD(mid - 1, mid - 1);
-  BoardUpdateLCD(mid, mid);
-  BoardUpdateLCD(mid - 1, mid);
-  BoardUpdateLCD(mid, mid - 1);
+
+
+  BoardUpdateLCD(mid - 1, mid - 1, playerDisk);
+  BoardUpdateLCD(mid, mid, playerDisk);
+  BoardUpdateLCD(mid - 1, mid, compDisk);
+  BoardUpdateLCD(mid, mid - 1, compDisk);
 
 }
 
-void BoardUpdateLCD(int x, int y)
+void BoardUpdateLCD(int x, int y, int player)
 {
-  if (board[x][y] == 1)
+  if (player == 1)
   {
     x = x * cellSize + 190;
     y = y * cellSize + 30;
     BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
     BSP_LCD_FillCircle(x, y, 25);
   }
-  if (board[x][y] == -1)
+  if (player == -1)
   {
     x = x * cellSize + 190;
     y = y * cellSize + 30;
@@ -856,6 +874,55 @@ void StartScreen() {
 		BSP_LCD_DisplayStringAt(0,160, (uint8_t *)string, CENTER_MODE);
 }
 
+void PlayerInput () {
+  if (flagTS == true && flagStartTime == true)
+  {
+    flagTS = false;
+    if (numberMoves < 10 ) {
+      if (playerNext == true) {
+        playerNext = false;
+        numberMoves ++;
+        BoardUpdateLCD (x_cellTS , y_cellTS, 1);
+      }
+      else if (playerNext == false) {
+        playerNext = true;
+        numberMoves ++;
+        BoardUpdateLCD (x_cellTS , y_cellTS, -1);
+        }
+      
+     }
+    else {
+      GameEnd();
+    }
+  }
+}
+
+void GameEnd () {
+
+	if (f_mount (&SDFatFS, SDPath, 0) != FR_OK) {
+		Error_Handler();
+	}
+
+	if(f_open(&SDFile, "stats.txt", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) {
+		Error_Handler();
+	}
+
+	sprintf(saveSD, "Time elapsed %d:%d / Number of moves %d", gameTimeMin, gameTimeSec, numberMoves);
+	if(f_write (&SDFile, saveSD, strlen(saveSD), &nbytes)!= FR_OK) {
+		Error_Handler();
+	}
+	f_close(&SDFile);
+
+	BSP_LCD_SetTextColor(LCD_COLOR_DARKRED);
+	BSP_LCD_FillRect(250, 150, 300, 140);
+
+	char string[20];
+	sprintf(string, "GAME OVER");
+	BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+	BSP_LCD_SetBackColor(LCD_COLOR_DARKRED);
+	BSP_LCD_DisplayStringAt(0,220, (uint8_t *)string, CENTER_MODE);
+
+}
 
 static void LCD_Config(void)
 {
