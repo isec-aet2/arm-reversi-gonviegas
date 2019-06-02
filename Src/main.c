@@ -190,9 +190,7 @@ int main(void)
   BSP_TS_ITConfig();
   HAL_TIM_Base_Start_IT(&htim6);
   StartScreen();
-  
 
- 
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -800,7 +798,7 @@ void TouchTS()
     TS_StateTypeDef TS_State;
     BSP_TS_GetState(&TS_State);
     if(flagStartTime == true){
-      if (TS_State.touchX[0] >= 160 && TS_State.touchX[0] <= 640 && TS_State.touchY[0] >= 0 && TS_State.touchY[0] <= 480)
+      if (TS_State.touchX[0] > 160 && TS_State.touchX[0] < 640 && TS_State.touchY[0] > 0 && TS_State.touchY[0] < 480)
       {
         x_cellTS = (TS_State.touchX[0] - 160) / cellSize;
         y_cellTS = TS_State.touchY[0] / cellSize;
@@ -845,6 +843,8 @@ void GameStart()
 
 void BoardUpdateLCD(int x, int y, int player)
 {
+	if (flagStartTime == true) {
+
   if (player == 1)
   {
     x = x * cellSize + 190;
@@ -859,6 +859,7 @@ void BoardUpdateLCD(int x, int y, int player)
     BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
     BSP_LCD_FillCircle(x, y, 25);
   }
+	}
 }
 
 
@@ -883,6 +884,7 @@ void PlayerInput () {
         playerNext = false;
         numberMoves ++;
         BoardUpdateLCD (x_cellTS , y_cellTS, 1);
+
       }
       else if (playerNext == false) {
         playerNext = true;
@@ -898,21 +900,6 @@ void PlayerInput () {
 }
 
 void GameEnd () {
-
-	if (f_mount (&SDFatFS, SDPath, 0) != FR_OK) {
-		Error_Handler();
-	}
-
-	if(f_open(&SDFile, "stats.txt", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) {
-		Error_Handler();
-	}
-
-	sprintf(saveSD, "Time elapsed %d:%d / Number of moves %d", gameTimeMin, gameTimeSec, numberMoves);
-	if(f_write (&SDFile, saveSD, strlen(saveSD), &nbytes)!= FR_OK) {
-		Error_Handler();
-	}
-	f_close(&SDFile);
-
 	BSP_LCD_SetTextColor(LCD_COLOR_DARKRED);
 	BSP_LCD_FillRect(250, 150, 300, 140);
 
@@ -920,7 +907,22 @@ void GameEnd () {
 	sprintf(string, "GAME OVER");
 	BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
 	BSP_LCD_SetBackColor(LCD_COLOR_DARKRED);
-	BSP_LCD_DisplayStringAt(0,220, (uint8_t *)string, CENTER_MODE);
+	BSP_LCD_DisplayStringAt(0,210, (uint8_t *)string, CENTER_MODE);
+
+	if (f_mount (&SDFatFS, SDPath, 0) != FR_OK);
+
+	if(f_open(&SDFile, "stats.txt", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK);
+
+	sprintf(saveSD, "Time elapsed %d:%d / Number of moves %d", gameTimeMin, gameTimeSec, numberMoves);
+	if(f_write (&SDFile, saveSD, strlen(saveSD), &nbytes)!= FR_OK) {
+		sprintf(string, "File not saved");
+		BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+		BSP_LCD_SetBackColor(LCD_COLOR_DARKRED);
+		BSP_LCD_DisplayStringAt(0,235, (uint8_t *)string, CENTER_MODE);
+	}
+	f_close(&SDFile);
+
+
 
 }
 
