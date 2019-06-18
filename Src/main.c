@@ -20,10 +20,15 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "fatfs.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "stm32f769i_discovery.h"
+#include "stm32f769i_discovery_lcd.h"
+#include "stm32f769i_discovery_ts.h"
+#include "stdio.h"
+#include "stdbool.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,7 +38,14 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define TEMP_REFRESH_PERIOD   0   /* Internal temperature refresh period */
+#define MAX_CONVERTED_VALUE   4095    /* Max converted value */
+#define AMBIENT_TEMP            25    /* Ambient Temperature */
+#define VSENS_AT_AMBIENT_TEMP  760    /* VSENSE value (mv) at ambient temperature */
+#define AVG_SLOPE               25    /* Avg_Solpe multiply by 10 */
+#define VREF                  3300
 
+#define LAYER0_ADDRESS (LCD_FB_START_ADDRESS)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -42,6 +54,7 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
 
 DMA2D_HandleTypeDef hdma2d;
 
@@ -49,9 +62,37 @@ DSI_HandleTypeDef hdsi;
 
 LTDC_HandleTypeDef hltdc;
 
+SD_HandleTypeDef hsd2;
+
+TIM_HandleTypeDef htim6;
+
 SDRAM_HandleTypeDef hsdram1;
 
 /* USER CODE BEGIN PV */
+volatile uint32_t ConvertedValue;
+bool flagADC1 = false;
+bool flagTS = false;
+uint16_t counterTIM6 = 0;
+bool flagGameTime = false;
+bool flagGameStart = false;
+bool flagStartTime = false;
+uint16_t gameTimeSec = 0;
+uint16_t gameTimeMin = 0;
+const uint16_t cellSize = 60;
+uint16_t x_cellTS;
+uint16_t y_cellTS;
+int board [8][8];
+bool moves [8][8];
+const int playerDisk = 1;
+const int compDisk = -1;
+const int SIZE = 8; 
+int x;
+int y;
+int numberMoves = 0;
+bool playerNext = true;
+int nbytes;
+char saveSD [60];
+
 
 /* USER CODE END PV */
 
@@ -59,15 +100,31 @@ SDRAM_HandleTypeDef hsdram1;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA2D_Init(void);
-static void MX_DSIHOST_DSI_Init(void);
 static void MX_FMC_Init(void);
 static void MX_LTDC_Init(void);
+static void MX_ADC1_Init(void);
+static void MX_DSIHOST_DSI_Init(void);
+static void MX_SDMMC2_SD_Init(void);
+static void MX_TIM6_Init(void);
 /* USER CODE BEGIN PFP */
+static void LCD_Config(void);
+void GridLCD();
+void TempLCD();
+void TouchTS();
+void GameTimeLCD();
+void BoardUpdateLCD (int x, int y, int player);
+void GameStart();
+void StartScreen();
+void PlayerInput ();
+void GameEnd();
+
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+
 
 /* USER CODE END 0 */
 
@@ -77,7 +134,13 @@ static void MX_LTDC_Init(void);
   */
 int main(void)
 {
+
+
+		
+
   /* USER CODE BEGIN 1 */
+
+  //unsigned int nbytes;
 
   /* USER CODE END 1 */
   
@@ -107,10 +170,26 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA2D_Init();
-  MX_DSIHOST_DSI_Init();
   MX_FMC_Init();
   MX_LTDC_Init();
+  MX_ADC1_Init();
+  MX_DSIHOST_DSI_Init();
+  MX_SDMMC2_SD_Init();
+  MX_TIM6_Init();
+  MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
+  BSP_LED_Init(LED_RED);
+  BSP_LED_Init(LED_GREEN);
+  BSP_PB_Init(BUTTON_USER, BUTTON_MODE_GPIO);
+  LCD_Config();
+  //BSP_PB_Init();
+  BSP_LCD_LayerDefaultInit(0, LAYER0_ADDRESS);
+  BSP_LCD_SelectLayer(0);
+  HAL_ADC_Start(&hadc1);
+  BSP_TS_Init(BSP_LCD_GetXSize(), BSP_LCD_GetYSize());
+  BSP_TS_ITConfig();
+  HAL_TIM_Base_Start_IT(&htim6);
+  StartScreen();
 
   /* USER CODE END 2 */
 
@@ -118,10 +197,31 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  TempLCD();
+    TouchTS();
+    PlayerInput();
+   
+
+    if (BSP_PB_GetState(BUTTON_WAKEUP)==1){
+    	flagStartTime = false;
+    	StartScreen();
+    	GameTimeLCD();
+    }
+
+    if (flagGameStart == true) {
+	    flagGameStart = false;
+	    flagStartTime = true;
+	    GameStart();
+    }
+	if(flagStartTime == true) {
+		GameTimeLCD();
+    }
+
+  }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-  }
+
   /* USER CODE END 3 */
 }
 
@@ -148,7 +248,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLM = 25;
   RCC_OscInitStruct.PLL.PLLN = 400;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-  RCC_OscInitStruct.PLL.PLLQ = 2;
+  RCC_OscInitStruct.PLL.PLLQ = 8;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -172,17 +272,70 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_LTDC;
+  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_LTDC|RCC_PERIPHCLK_SDMMC2
+                              |RCC_PERIPHCLK_CLK48;
   PeriphClkInitStruct.PLLSAI.PLLSAIN = 192;
   PeriphClkInitStruct.PLLSAI.PLLSAIR = 2;
   PeriphClkInitStruct.PLLSAI.PLLSAIQ = 2;
   PeriphClkInitStruct.PLLSAI.PLLSAIP = RCC_PLLSAIP_DIV2;
   PeriphClkInitStruct.PLLSAIDivQ = 1;
   PeriphClkInitStruct.PLLSAIDivR = RCC_PLLSAIDIVR_2;
+  PeriphClkInitStruct.Clk48ClockSelection = RCC_CLK48SOURCE_PLL;
+  PeriphClkInitStruct.Sdmmc2ClockSelection = RCC_SDMMC2CLKSOURCE_CLK48;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion) 
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.ScanConvMode = DISABLE;
+  hadc1.Init.ContinuousConvMode = ENABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SEQ_CONV;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time. 
+  */
+  sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
+  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_56CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
 }
 
 /**
@@ -415,6 +568,72 @@ static void MX_LTDC_Init(void)
 
 }
 
+/**
+  * @brief SDMMC2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SDMMC2_SD_Init(void)
+{
+
+  /* USER CODE BEGIN SDMMC2_Init 0 */
+
+  /* USER CODE END SDMMC2_Init 0 */
+
+  /* USER CODE BEGIN SDMMC2_Init 1 */
+
+  /* USER CODE END SDMMC2_Init 1 */
+  hsd2.Instance = SDMMC2;
+  hsd2.Init.ClockEdge = SDMMC_CLOCK_EDGE_RISING;
+  hsd2.Init.ClockBypass = SDMMC_CLOCK_BYPASS_DISABLE;
+  hsd2.Init.ClockPowerSave = SDMMC_CLOCK_POWER_SAVE_DISABLE;
+  hsd2.Init.BusWide = SDMMC_BUS_WIDE_1B;
+  hsd2.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_DISABLE;
+  hsd2.Init.ClockDiv = 0;
+  /* USER CODE BEGIN SDMMC2_Init 2 */
+
+  /* USER CODE END SDMMC2_Init 2 */
+
+}
+
+/**
+  * @brief TIM6 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM6_Init(void)
+{
+
+  /* USER CODE BEGIN TIM6_Init 0 */
+
+  /* USER CODE END TIM6_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM6_Init 1 */
+
+  /* USER CODE END TIM6_Init 1 */
+  htim6.Instance = TIM6;
+  htim6.Init.Prescaler = 9999;
+  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim6.Init.Period = 9999;
+  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM6_Init 2 */
+
+  /* USER CODE END TIM6_Init 2 */
+
+}
+
 /* FMC initialization function */
 static void MX_FMC_Init(void)
 {
@@ -469,20 +688,285 @@ static void MX_FMC_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-  __HAL_RCC_GPIOG_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOG_CLK_ENABLE();
   __HAL_RCC_GPIOI_CLK_ENABLE();
   __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOJ_CLK_ENABLE();
 
+  /*Configure GPIO pin : PI13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOI, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PI15 */
+  GPIO_InitStruct.Pin = GPIO_PIN_15;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOI, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
 }
 
 /* USER CODE BEGIN 4 */
+
+void GridLCD()
+{
+
+  BSP_LCD_SetTextColor(LCD_COLOR_GREEN);
+  BSP_LCD_FillRect(160, 0, 480, 480);
+
+
+  for (int i = 160; i <= 640; i += cellSize)
+  {
+	BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
+    BSP_LCD_FillRect(i, 0, 1, 480);
+  }
+
+  for (int i = 0; i <= 480; i += cellSize)
+  {
+	BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
+    BSP_LCD_FillRect(160, i, 480, 1);
+  }
+
+
+}
+
+void TempLCD()
+{
+  if (flagADC1 == true)
+  {
+    flagADC1 = false;
+    long int JTemp = 0;
+    char s[10];
+    HAL_StatusTypeDef status = HAL_ADC_PollForConversion(&hadc1, TEMP_REFRESH_PERIOD);
+    if (status == HAL_OK)
+    {
+      ConvertedValue = HAL_ADC_GetValue(&hadc1);
+      JTemp = ((((ConvertedValue * VREF) / MAX_CONVERTED_VALUE) - VSENS_AT_AMBIENT_TEMP) * 10 / AVG_SLOPE) + AMBIENT_TEMP; //internal sensor temperature
+      sprintf(s, "%.2ldC", JTemp);
+      BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+      BSP_LCD_SetBackColor(LCD_COLOR_DARKBLUE);
+      BSP_LCD_DisplayStringAt(0, 0, (uint8_t *)s, RIGHT_MODE);
+    }
+  }
+}
+
+void GameTimeLCD()
+{
+  if (flagGameTime == true ) {
+    flagGameTime = false;
+    char string[10];
+    char s_time[10];
+    gameTimeSec++;
+
+    if (gameTimeSec > 59)
+    {
+      gameTimeSec = 0;
+      gameTimeMin++;
+    }
+    sprintf(string, "GAME TIME");
+    BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+    BSP_LCD_SetBackColor(LCD_COLOR_DARKBLUE);
+    BSP_LCD_DisplayStringAtLine(19, (uint8_t *)string);
+    sprintf(s_time, "  %02d:%02d", gameTimeMin, gameTimeSec);
+    BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+    BSP_LCD_SetBackColor(LCD_COLOR_DARKBLUE);
+    BSP_LCD_DisplayStringAtLine(18, (uint8_t *)s_time);
+  }
+  if (flagStartTime == false) {
+    gameTimeSec = 0;
+    gameTimeMin = 0;
+  }
+}
+
+void TouchTS()
+{
+  if (flagTS == true)
+  {
+    flagTS = false;
+    TS_StateTypeDef TS_State;
+    BSP_TS_GetState(&TS_State);
+    if(flagStartTime == true){
+      if (TS_State.touchX[0] > 160 && TS_State.touchX[0] < 640 && TS_State.touchY[0] > 0 && TS_State.touchY[0] < 480)
+      {
+        x_cellTS = (TS_State.touchX[0] - 160) / cellSize;
+        y_cellTS = TS_State.touchY[0] / cellSize;
+      }
+    }
+    if (flagStartTime == false){
+      if (TS_State.touchX[0] >= 350 && TS_State.touchX[0] <= 450 && TS_State.touchY[0] >= 310 && TS_State.touchY[0] <= 390)
+      {
+        flagGameStart = true;
+      }
+    }
+  }
+}
+
+void GameStart()
+{
+	GridLCD();
+
+  playerNext = !playerNext;
+
+  numberMoves = 4;    
+
+	for (int l = 0; l < 8; l++)
+	{
+    for (int c = 0; c < 8; c++)
+    {
+      board[l][c] = 0;
+    }
+  }
+  int mid = SIZE / 2;
+  board[mid - 1][mid - 1] = board[mid][mid] = playerDisk;
+  board[mid - 1][mid] = board[mid][mid - 1] = compDisk;
+
+
+
+  BoardUpdateLCD(mid - 1, mid - 1, playerDisk);
+  BoardUpdateLCD(mid, mid, playerDisk);
+  BoardUpdateLCD(mid - 1, mid, compDisk);
+  BoardUpdateLCD(mid, mid - 1, compDisk);
+
+}
+
+void BoardUpdateLCD(int x, int y, int player)
+{
+	if (flagStartTime == true) {
+
+  if (player == 1)
+  {
+    x = x * cellSize + 190;
+    y = y * cellSize + 30;
+    BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+    BSP_LCD_FillCircle(x, y, 25);
+  }
+  if (player == -1)
+  {
+    x = x * cellSize + 190;
+    y = y * cellSize + 30;
+    BSP_LCD_SetTextColor(LCD_COLOR_BLACK);
+    BSP_LCD_FillCircle(x, y, 25);
+  }
+	}
+}
+
+
+void StartScreen() {
+
+	char string[20];
+		sprintf(string, "START");
+		BSP_LCD_Clear(LCD_COLOR_DARKBLUE);
+		BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+		BSP_LCD_SetBackColor(LCD_COLOR_DARKBLUE);
+		BSP_LCD_DisplayStringAt(0,350, (uint8_t *)string, CENTER_MODE);
+		sprintf(string, "REVERSI");
+		BSP_LCD_DisplayStringAt(0,160, (uint8_t *)string, CENTER_MODE);
+}
+
+void PlayerInput () {
+  if (flagTS == true && flagStartTime == true)
+  {
+    flagTS = false;
+    if (numberMoves < 10 ) {
+      if (playerNext == true) {
+        playerNext = false;
+        numberMoves ++;
+        BoardUpdateLCD (x_cellTS , y_cellTS, 1);
+
+      }
+      else if (playerNext == false) {
+        playerNext = true;
+        numberMoves ++;
+        BoardUpdateLCD (x_cellTS , y_cellTS, -1);
+        }
+      
+     }
+    else {
+      GameEnd();
+    }
+  }
+}
+
+void GameEnd () {
+	BSP_LCD_SetTextColor(LCD_COLOR_DARKRED);
+	BSP_LCD_FillRect(250, 150, 300, 140);
+
+	char string[20];
+	sprintf(string, "GAME OVER");
+	BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+	BSP_LCD_SetBackColor(LCD_COLOR_DARKRED);
+	BSP_LCD_DisplayStringAt(0,210, (uint8_t *)string, CENTER_MODE);
+
+	if (f_mount (&SDFatFS, SDPath, 0) != FR_OK);
+
+	if(f_open(&SDFile, "stats.txt", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK);
+
+	sprintf(saveSD, "Time elapsed %d:%d / Number of moves %d", gameTimeMin, gameTimeSec, numberMoves);
+	if(f_write (&SDFile, saveSD, strlen(saveSD), &nbytes)!= FR_OK) {
+		sprintf(string, "File not saved");
+		BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+		BSP_LCD_SetBackColor(LCD_COLOR_DARKRED);
+		BSP_LCD_DisplayStringAt(0,235, (uint8_t *)string, CENTER_MODE);
+	}
+	f_close(&SDFile);
+
+
+
+}
+
+static void LCD_Config(void)
+{
+  uint32_t lcd_status = LCD_OK;
+
+  /* Initialize the LCD */
+  lcd_status = BSP_LCD_Init();
+  while (lcd_status != LCD_OK);
+
+  BSP_LCD_LayerDefaultInit(0, LCD_FB_START_ADDRESS);
+
+  /* LCD default settings */
+  BSP_LCD_Clear(LCD_COLOR_DARKBLUE);
+  BSP_LCD_SetTextColor(LCD_COLOR_WHITE);
+  BSP_LCD_SetBackColor(LCD_COLOR_DARKBLUE);
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  if (htim->Instance == TIM6)
+  {
+    flagGameTime = true;
+    if (counterTIM6 == 0)
+    {
+      counterTIM6++;
+      flagADC1 = false;
+    }
+    else
+    {
+      counterTIM6 = 0;
+      flagADC1 = true;
+    }
+  }
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == GPIO_PIN_13)
+  {
+    flagTS = true;
+  }
+}
 
 /* USER CODE END 4 */
 
@@ -494,7 +978,10 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
-
+	while (1) {
+		BSP_LED_Toggle(LED_GREEN);
+		HAL_Delay(250);
+	}
   /* USER CODE END Error_Handler_Debug */
 }
 
